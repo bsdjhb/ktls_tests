@@ -6,4 +6,5 @@ add_compile_options(-Wall -Werror)
 
 find_package(OpenSSL REQUIRED)
 
+add_subdirectory(client)
 add_subdirectory(server)
