@@ -41,12 +41,14 @@
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 
+#include "local.h"
+
 static volatile sig_atomic_t quit;
 
 static void
 usage(void)
 {
-	fprintf(stderr, "Usage: client host [port]\n");
+	fprintf(stderr, "Usage: client [-d msec] [-t type] host [port]\n");
 	exit(1);
 }
 
@@ -88,8 +90,8 @@ create_client_context(void)
 	if (ctx == NULL)
 		errssl(1, "SSL_CTX_new");
 
-	SSL_CTX_set_options(ctx, SSL_OP_NO_ENCRYPT_THEN_MAC |
-	    SSL_OP_ENABLE_KTLS);
+	/* Cannot use KTLS with BIO_delay. */
+	SSL_CTX_clear_options(ctx, SSL_OP_ENABLE_KTLS);
 
 	return (ctx);
 }
@@ -146,8 +148,9 @@ static char buf[] = "!\"#$%&'()*+,-./01234567890:;<=>?@"
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
 
 static void
-handle_connection(SSL_CTX *ctx, int s)
+handle_connection(SSL_CTX *ctx, int s, int delay_type, int delay_ms)
 {
+	BIO *bio;
 	SSL *ssl;
 	size_t total;
 	int error, ret;
@@ -155,22 +158,29 @@ handle_connection(SSL_CTX *ctx, int s)
 	ssl = SSL_new(ctx);
 	if (ssl == NULL) {
 		warnssl("SSL_new");
-		close(s);
 		return;
 	}
 
-	if (SSL_set_fd(ssl, s) != 1) {
-		warnssl("SSL_set_fd");
+	bio = BIO_new_socket(s, BIO_NOCLOSE);
+	if (bio == NULL) {
+		warnssl("BIO_new_socket for rbio");
 		SSL_free(ssl);
-		close(s);
 		return;
 	}
+	SSL_set0_rbio(ssl, bio);
+
+	bio = BIO_new_delay(s, BIO_NOCLOSE, delay_type, delay_ms * 1000);
+	if (bio == NULL) {
+		warnssl("BIO_new_delay for wbio");
+		SSL_free(ssl);
+		return;
+	}
+	SSL_set0_wbio(ssl, bio);
 
 	ret = SSL_connect(ssl);
 	if (ret != 1) {
 		warnssl("SSL_connect");
 		SSL_free(ssl);
-		close(s);
 		return;
 	}
 
@@ -200,7 +210,6 @@ handle_connection(SSL_CTX *ctx, int s)
 		warnssl("SSL_write");
 	}
 	SSL_free(ssl);
-	close(s);
 }
 
 int
@@ -208,11 +217,28 @@ main(int ac, char **av)
 {
 	SSL_CTX *ctx;
 	const char *host, *port;
-	int ch, s;
+	int ch, delay_type, delay_ms, s;
 
+	delay_ms = 25;
+	delay_type = DELAY_NONE;
 	port = "45678";
-	while ((ch = getopt(ac, av, "")) != -1)
+	while ((ch = getopt(ac, av, "d:t:")) != -1)
 		switch (ch) {
+		case 'd':
+			delay_ms = atoi(optarg);
+			break;
+		case 't':
+			if (strcasecmp(optarg, "none") == 0)
+				delay_type = DELAY_NONE;
+			else if (strcasecmp(optarg, "header") == 0)
+				delay_type = DELAY_SPLIT_HEADER;
+			else if (strcasecmp(optarg, "body") == 0)
+				delay_type = DELAY_SPLIT_BODY;
+			else if (strcasecmp(optarg, "both") == 0)
+				delay_type = DELAY_SPLIT_BOTH;
+			else
+				errx(1, "Invalid delay type %s", optarg);
+			break;
 		default:
 			usage();
 		}
@@ -228,13 +254,18 @@ main(int ac, char **av)
 	if (ac == 2)
 		port = av[1];
 
+	if (delay_ms < 0)
+		errx(1, "Invalid delay: %d", delay_ms);
+	if (!init_bio_delay())
+		errssl(1, "failed to init BIO_delay");
+
 	ctx = create_client_context();
 
 	s = open_client(host, port);
 	if (s == -1)
 		return (1);
 
-	handle_connection(ctx, s);
+	handle_connection(ctx, s, delay_type, delay_ms);
 
 	close(s);
 
