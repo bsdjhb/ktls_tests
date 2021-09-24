@@ -48,7 +48,8 @@ static volatile sig_atomic_t quit;
 static void
 usage(void)
 {
-	fprintf(stderr, "Usage: client [-d msec] [-t type] host [port]\n");
+	fprintf(stderr,
+	    "Usage: client [-d msec] [-s size] [-t type] host [port]\n");
 	exit(1);
 }
 
@@ -148,7 +149,7 @@ static char buf[] = "!\"#$%&'()*+,-./01234567890:;<=>?@"
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
 
 static void
-handle_connection(SSL_CTX *ctx, int s, int delay_type, int delay_ms)
+handle_connection(SSL_CTX *ctx, int s, int delay_type, int delay_ms, int size)
 {
 	BIO *bio;
 	SSL *ssl;
@@ -192,7 +193,7 @@ handle_connection(SSL_CTX *ctx, int s, int delay_type, int delay_ms)
 	(void)signal(SIGQUIT, handler);
 
 	total = 0;
-	while (!quit) {
+	while (!quit && (size == 0 || total < size)) {
 		ret = SSL_write(ssl, buf, sizeof(buf));
 		if (ret <= 0)
 			break;
@@ -217,15 +218,19 @@ main(int ac, char **av)
 {
 	SSL_CTX *ctx;
 	const char *host, *port;
-	int ch, delay_type, delay_ms, s;
+	int ch, delay_type, delay_ms, s, size;
 
+	size = 0;
 	delay_ms = 25;
 	delay_type = DELAY_NONE;
 	port = "45678";
-	while ((ch = getopt(ac, av, "d:t:")) != -1)
+	while ((ch = getopt(ac, av, "d:s:t:")) != -1)
 		switch (ch) {
 		case 'd':
 			delay_ms = atoi(optarg);
+			break;
+		case 's':
+			size = atoi(optarg);
 			break;
 		case 't':
 			if (strcasecmp(optarg, "none") == 0)
@@ -256,6 +261,8 @@ main(int ac, char **av)
 
 	if (delay_ms < 0)
 		errx(1, "Invalid delay: %d", delay_ms);
+	if (size < 0)
+		errx(1, "Invalid size: %d", size);
 	if (!init_bio_delay())
 		errssl(1, "failed to init BIO_delay");
 
@@ -265,7 +272,7 @@ main(int ac, char **av)
 	if (s == -1)
 		return (1);
 
-	handle_connection(ctx, s, delay_type, delay_ms);
+	handle_connection(ctx, s, delay_type, delay_ms, size);
 
 	close(s);
 
