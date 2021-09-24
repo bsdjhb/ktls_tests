@@ -154,7 +154,7 @@ handle_connection(SSL_CTX *ctx, int s, int delay_type, int delay_ms, int size)
 	BIO *bio;
 	SSL *ssl;
 	size_t total;
-	int error, ret;
+	int ret;
 
 	ssl = SSL_new(ctx);
 	if (ssl == NULL) {
@@ -192,6 +192,7 @@ handle_connection(SSL_CTX *ctx, int s, int delay_type, int delay_ms, int size)
 	(void)signal(SIGINT, handler);
 	(void)signal(SIGQUIT, handler);
 
+	ret = 1;
 	total = 0;
 	while (!quit && (size == 0 || total < size)) {
 		ret = SSL_write(ssl, buf, sizeof(buf));
@@ -202,13 +203,12 @@ handle_connection(SSL_CTX *ctx, int s, int delay_type, int delay_ms, int size)
 
 	printf("Wrote %zu bytes\n", total);
 
-	error = SSL_get_error(ssl, ret);
-	if (error == SSL_ERROR_ZERO_RETURN) {
+	if (ret <= 0) {
+		warnssl("SSL_write");
+	} else {
 		ret = SSL_shutdown(ssl);
 		if (ret < 0)
 			warnssl("SSL_shutdown");
-	} else {
-		warnssl("SSL_write");
 	}
 	SSL_free(ssl);
 }
