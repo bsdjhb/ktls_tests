@@ -94,6 +94,11 @@ create_client_context(void)
 	/* Cannot use KTLS with BIO_delay. */
 	SSL_CTX_clear_options(ctx, SSL_OP_ENABLE_KTLS);
 
+	if (SSL_CTX_set_min_proto_version(ctx, TLS1_1_VERSION) != 1)
+		errssl(1, "SSL_CTX_set_min_proto_version");
+	if (SSL_CTX_set_max_proto_version(ctx, TLS1_2_VERSION) != 1)
+		errssl(1, "SSL_CTX_set_max_proto_version");
+
 	return (ctx);
 }
 
