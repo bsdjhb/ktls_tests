@@ -158,7 +158,7 @@ again:
 	 * whatever is left) and delay.
 	 */
 	if (ctx->resid > 1 && (ctx->delay_type == DELAY_SPLIT_BODY ||
-	    ctx->delay_type == DELAY_SPLIT_HEADER)) {
+	    ctx->delay_type == DELAY_SPLIT_BOTH)) {
 		todo = ctx->resid / 2;
 		if (todo > inl)
 			todo = inl;
