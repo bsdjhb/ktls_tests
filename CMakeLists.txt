@@ -7,4 +7,5 @@ add_compile_options(-Wall -Werror)
 find_package(OpenSSL REQUIRED)
 
 add_subdirectory(client)
+add_subdirectory(client_tls10)
 add_subdirectory(server)
