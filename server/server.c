@@ -73,7 +73,7 @@ errssl(int code, const char *fmt, ...)
 }
 
 static SSL_CTX *
-create_server_context(const char *cert, const char *key)
+create_server_context(const char *cert, const char *key, bool read_ahead)
 {
 	SSL_CTX *ctx;
 
@@ -90,6 +90,9 @@ create_server_context(const char *cert, const char *key)
 		errssl(1, "SSL_CTX_use_PrivateKey_file");
 	if (SSL_CTX_check_private_key(ctx) != 1)
 		errssl(1, "SSL_CTX_check_private_key");
+
+	if (read_ahead)
+		SSL_CTX_set_read_ahead(ctx, 1);
 
 	return (ctx);
 }
@@ -239,12 +242,17 @@ main(int ac, char **av)
 {
 	SSL_CTX *ctx;
 	const char *cert, *key, *port;
+	bool read_ahead;
 	int ch, kq;
 
+	read_ahead = false;
 	cert = key = NULL;
 	port = "45678";
-	while ((ch = getopt(ac, av, "c:k:p:")) != -1)
+	while ((ch = getopt(ac, av, "Ac:k:p:")) != -1)
 		switch (ch) {
+		case 'A':
+			read_ahead = true;
+			break;
 		case 'c':
 			cert = optarg;
 			break;
@@ -265,7 +273,7 @@ main(int ac, char **av)
 	if (kq < 0)
 		err(1, "kqueue");
 
-	ctx = create_server_context(cert, key);
+	ctx = create_server_context(cert, key, read_ahead);
 
 	create_server_sockets(kq, port);
 
