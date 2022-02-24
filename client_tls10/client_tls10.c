@@ -34,6 +34,7 @@
  * backing store out of cache before invoking sendfile.
  */
 
+#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <err.h>
@@ -149,52 +150,63 @@ open_client(const char *host, const char *port)
 	return (s);
 }
 
-static bool
-prep_file(int fd, const struct stat *sb)
-{
-	char buf[1024 * 1024];
-	off_t offset, len;
-	ssize_t nread;
-	int state;
+#define	FILE_STRIDE	(1024 * 1024)
 
-	if (sb->st_size < sizeof(buf) * 4) {
+static int
+faultin_pages(char *p, size_t len)
+{
+	int ps, sum;
+
+	sum = 0;
+	ps = getpagesize();
+	while (len > 0) {
+		sum += *p;
+		p += ps;
+		if (len < ps)
+			break;
+		len -= ps;
+	}
+	return (sum);
+}
+
+static bool
+prep_file(int fd, off_t size)
+{
+	char *cp;
+	off_t offset, todo;
+	int state, sum;
+
+	if (size < FILE_STRIDE * 4) {
 		warn("file too small");
 		return (false);
 	}
 
+	cp = mmap(NULL, size, PROT_READ, MAP_SHARED, fd, 0);
+	if (cp == MAP_FAILED) {
+		warn("mmap");
+		return (false);
+	}
+
+	sum = 0;
 	state = 0;
-	offset = 0;
-	for (;;) {
+	for (offset = 0; offset < size; offset += FILE_STRIDE) {
+		todo = FILE_STRIDE;
+		if (offset + todo > size)
+			todo = size - offset;
 		if (state == 0) {
-			nread = pread(fd, buf, sizeof(buf), offset);
-			if (nread == -1) {
-				warn("pread");
-				return (false);
-			}
-			if (nread < sizeof(buf))
-				return (true);
-			offset += nread;
+			sum += faultin_pages(cp + offset, todo);
 		} else {
-			/*
-			 * This depends on POSIX_FADV_DONTNEED
-			 * revoking pages so that sendfile() will have
-			 * to use disk I/O to complete the request.
-			 */
-			len = sizeof(buf);
-			if (len > sb->st_size - offset)
-				len = 0;
-			nread = posix_fadvise(fd, offset, sizeof(buf),
-			    POSIX_FADV_DONTNEED);
-			if (nread != 0) {
-				warnc(nread, "posix_fadvise");
+			if (msync(cp + offset, todo, MS_INVALIDATE) != 0) {
+				warn("msync");
 				return (false);
 			}
-			if (len == 0)
-				return (true);
-			offset += len;
 		}
 		state ^= 1;
 	}
+
+	printf("Pointless sum: %u\n", sum);
+	munmap(cp, size);
+	return (true);
 }
 
 static void
@@ -208,7 +220,7 @@ handle_connection(SSL_CTX *ctx, int s, int fd)
 		warn("fstat");
 		return;
 	}
-	if (!prep_file(fd, &sb))
+	if (!prep_file(fd, sb.st_size))
 		return;
 
 	ssl = SSL_new(ctx);
